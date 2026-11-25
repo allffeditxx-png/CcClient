@@ -1,0 +1,64 @@
+name: build-1_21_11
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip mod source zip
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/src
+          mkdir -p /tmp/src
+
+          FOUND_ROOT=""
+          for z in $(find . -maxdepth 3 -type f -name '*.zip' ! -path './.git/*' | sort); do
+            rm -rf /tmp/probe
+            mkdir -p /tmp/probe
+            unzip -q -o "$z" -d /tmp/probe || continue
+            g=$(find /tmp/probe -maxdepth 5 -type f -name 'build.gradle' | head -n 1 || true)
+            if [ -n "$g" ]; then
+              rm -rf /tmp/src
+              mv /tmp/probe /tmp/src
+              FOUND_ROOT=$(cd "$(dirname "$(find /tmp/src -maxdepth 5 -type f -name 'build.gradle' | head -n 1)")" && pwd)
+              echo "Using source archive: $z"
+              echo "Project root: $FOUND_ROOT"
+              break
+            fi
+          done
+
+          rm -rf /tmp/probe
+          if [ -z "$FOUND_ROOT" ]; then
+            echo "::error::No zip archive containing build.gradle was found in the repository."
+            exit 1
+          fi
+
+          echo "SRC_ROOT=$FOUND_ROOT" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.2.0"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          test -n "${SRC_ROOT:-}"
+          gradle -p "$SRC_ROOT" build --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-jar
+          path: |
+            ${{ env.SRC_ROOT }}/build/libs/*.jar
+            !${{ env.SRC_ROOT }}/build/libs/*-sources.jar
+            
